@@ -1,0 +1,146 @@
+inputmacro.txt
+
+MACRO
+M1 &x,&y,&a=AREG,&b=CREG
+MOVE &a,&x
+ADD &a,='1'
+MOVER &a,&y
+M2 69,169
+ADD &a,='5'
+MEND
+MACRO
+M2 &p,&q,&u=CREG,&v=DREG
+MOVER &u,&p
+MOVER &v,&q
+M3 73,173
+ADD &u,='15'
+ADD &v,='10'
+MEND
+MACRO
+M3 &a,&b
+ADD &a,&b
+MEND
+M1 10,20,&b=CREG
+M2 100,200,&u=AREG,&v=BREG
+
+macro.java
+
+// package macro;
+import java.io.*;
+import java.util.*;
+
+public class macro {
+
+    public static void main(String[] args) throws IOException {
+        // Make sure input.txt is in the working folder (or give a full path)
+        BufferedReader b1 = new BufferedReader(new FileReader("inputmacro.txt.txt"));
+        FileWriter f1 = new FileWriter("intermediate.txt"); // intermediate code
+        FileWriter f2 = new FileWriter("mnt.txt");          // Macro Name Table
+        FileWriter f3 = new FileWriter("mdt.txt");          // Macro Definition Table
+        FileWriter f4 = new FileWriter("ala.txt");          // Argument List Array
+
+        HashMap<String, Integer> pntab = new HashMap<>();   // Parameter Name Table
+        String s;
+        int paramNo = 1, mdtp = 1;
+        int state = 0; // 0 = outside macro, 1 = next line is header, 2 = inside macro body
+        int pp = 0, kp = 0, kpdtp = 0;
+        while ((s = b1.readLine()) != null) {
+            if (s.trim().isEmpty()) {
+                continue;
+            }
+            String word[] = s.trim().split("\\s+"); // separate by space
+            if (word[0].equalsIgnoreCase("MACRO")) {
+                state = 1;
+                continue;
+            }
+            if (state == 1 && !word[0].equalsIgnoreCase("MEND")) {
+                String macroName = word[0];
+                String params[] = {};
+                if (word.length > 1) {
+                    params = word[1].split(",");
+                }
+                paramNo = 1;
+                pp = 0;
+                kp = 0;
+                for (int i = 0; i < params.length; i++) {
+                    String p = params[i].trim();
+                    if (p.startsWith("&")) {
+                        if (p.contains("=")) { // keyword parameter
+                            kp++;
+                            String keywordParam[] = p.split("=", 2);
+                            pntab.put(keywordParam[0].substring(1), paramNo++);
+
+                            if (keywordParam.length == 2 && !keywordParam[1].isEmpty()) {
+                                f4.write(keywordParam[0].substring(1) + "\t" + keywordParam[1] + "\n");
+                            } else {
+                                f4.write(keywordParam[0].substring(1) + "\t" + "-" + "\n");
+                            }
+                        } else { // positional parameter
+                            pp++;
+                            pntab.put(p.substring(1), paramNo++);
+                        }
+                    }
+                }
+                f2.write(macroName + "\t" + pp + "\t" + kp + "\t" + mdtp + "\t" +
+                        (kp == 0 ? kpdtp : (kpdtp + 1)) + "\n");
+                kpdtp += kp;
+                state = 2;
+                continue;
+            }
+            if (word[0].equalsIgnoreCase("MEND") && state == 2) {
+                f3.write("MEND\n");
+                // reset macro-related state
+                state = 0;
+                pp = kp = 0;
+                mdtp++;          // count the MEND entry into MDT
+                paramNo = 1;
+                pntab.clear();
+            } else if (state == 2) {
+                // inside macro body -> write substituted line into MDT
+                for (int i = 0; i < s.length(); i++) {
+                    if (s.charAt(i) == '&') {
+                        i++;
+                        StringBuilder temp = new StringBuilder();
+                        while (i < s.length() && s.charAt(i) != ' ' && s.charAt(i) != ',' ) {
+                            temp.append(s.charAt(i++));
+                        }
+                        i--;
+                        String key = temp.toString();
+                        if (pntab.containsKey(key)) {
+                            f3.write("#" + pntab.get(key));
+                        } else {
+                            f3.write("&" + key); // fallback if not found
+                        }
+                    } else {
+                        f3.write(s.charAt(i));
+                    }
+                }
+                f3.write("\n");
+                mdtp++;
+            } else {
+                // outside macro -> copy to intermediate
+                f1.write(s + "\n");
+            }
+        }
+        b1.close();
+        f1.close();
+        f2.close();
+        f3.close();
+        f4.close();
+
+        // Print outputs
+        printFile("mnt.txt", "Macro Name Table (MNT):");
+        printFile("mdt.txt", "Macro Definition Table (MDT):");
+        printFile("ala.txt", "Argument List Array (ALA):");
+        printFile("intermediate.txt", "Intermediate Code:");
+    }
+    public static void printFile(String filename, String title) throws IOException {
+        System.out.println("\n--- " + title + " ---");
+        BufferedReader br = new BufferedReader(new FileReader(filename));
+        String line;
+        while ((line = br.readLine()) != null) {
+            System.out.println(line);
+        }
+        br.close();
+    }
+}
