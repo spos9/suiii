@@ -1,0 +1,247 @@
+input.txt
+
+START 200
+MOVER AREG ,ONE
+ADD BREG ,TWO
+ADD BREG , ='5'
+MOVEM CREG ,RESULT
+ONE DS 4
+TWO DC 2
+RESULT DS 1
+END
+
+Assembler1.java
+
+package spos;
+import java.io.*;
+import java.util.*;
+
+public class assembler1 {
+
+    // MOT / tables
+    static Map<String, String> IS = new HashMap<>();
+    static Map<String, String> AD = new HashMap<>();
+    static Map<String, String> DL = new HashMap<>();
+    static Map<String, String> RG = new HashMap<>();
+
+    // symbol table (names + addresses)
+    static List<String> Symtab = new ArrayList<>();
+    static Map<String, Integer> SymtabADD = new HashMap<>();
+
+    // literal table (names + addresses)
+    static List<String> Littab = new ArrayList<>();
+    static Map<String, Integer> LittabADD = new HashMap<>();
+
+    // intermediate listing
+    static List<String> intermediate = new ArrayList<>();
+
+    public static void main(String[] args) {
+        // initialize opcode / directive / register tables
+        IS.put("ADD", "01");
+        IS.put("SUB", "02");
+        IS.put("MUL", "03");
+        IS.put("DIV", "04");
+        IS.put("MOVER", "05");
+        IS.put("MOVEM", "06");
+
+        AD.put("START", "01");
+        AD.put("END", "02");
+
+        DL.put("DC", "01");
+        DL.put("DS", "02");
+
+        RG.put("AREG", "01");
+        RG.put("BREG", "02");
+        RG.put("CREG", "03");
+
+        // read input file "input.txt" from working directory
+        String filename = "C:\\Users\\lenovo\\eclipse-workspace\\spos\\src\\spos\\input.txt";
+        List<String> programLines = new ArrayList<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                // strip comments (text after ';') and trim
+                int commentPos = line.indexOf(';');
+                if (commentPos >= 0) line = line.substring(0, commentPos);
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                // normalize spaces around commas (so split works consistently)
+                line = line.replaceAll("\\s*,\\s*", " , ");
+                programLines.add(line);
+            }
+        } catch (FileNotFoundException e) {
+            System.err.println("Input file not found: " + filename);
+            return;
+        } catch (IOException e) {
+            System.err.println("Error reading file: " + e.getMessage());
+            return;
+        }
+
+        // run pass1
+        pass1(programLines.toArray(new String[0]));
+
+        // print results
+        System.out.println("----- Symbol Table -----");
+        System.out.printf("%-5s %-12s %s%n", "Index", "Symbol", "Address");
+        for (int i = 0; i < Symtab.size(); i++) {
+            String sym = Symtab.get(i);
+            Integer addr = SymtabADD.get(sym);
+            String addrStr = (addr == null) ? "-" : addr.toString();
+            System.out.printf("%-5d %-12s %s%n", i, sym, addrStr);
+        }
+
+        System.out.println("\n----- Literal Table -----");
+        System.out.printf("%-5s %-12s %s%n", "Index", "Literal", "Address");
+        for (int i = 0; i < Littab.size(); i++) {
+            String lit = Littab.get(i);
+            Integer addr = LittabADD.get(lit);
+            String addrStr = (addr == null) ? "-" : addr.toString();
+            System.out.printf("%-5d %-12s %s%n", i, lit, addrStr);
+        }
+
+        System.out.println("\n----- Intermediate Listing -----");
+        for (String line : intermediate) {
+            System.out.println(line);
+        }
+    }
+
+    static void pass1(String[] program) {
+        int LC = 0;
+        for (String line : program) {
+            // split on spaces or commas (multiple separators collapsed)
+            String parts[] = line.trim().split("[ \\t,]+");
+            if (parts.length == 0) continue;
+
+            // handle START directive
+            if (parts[0].equalsIgnoreCase("START")) {
+                if (parts.length > 1) {
+                    try {
+                        LC = Integer.parseInt(parts[1]);
+                    } catch (NumberFormatException nfe) {
+                        System.err.println("Invalid START address: " + parts[1] + " (using 0)");
+                        LC = 0;
+                    }
+                } else {
+                    LC = 0;
+                }
+                intermediate.add("AD " + AD.get("START") + " C " + LC);
+                continue;
+            }
+
+            // handle END directive
+            if (parts[0].equalsIgnoreCase("END")) {
+                intermediate.add("AD " + AD.get("END"));
+                // assign addresses to literals starting at current LC
+                for (int i = 0; i < Littab.size(); i++) {
+                    String lit = Littab.get(i); // e.g. ='5' or ="10"
+                    LittabADD.put(lit, LC);
+                    // extract numeric/text value for intermediate DL entry
+                    String value = lit;
+                    // attempt to extract between =' and ' or =" and "
+                    if (lit.length() >= 3 && (lit.startsWith("='") || lit.startsWith("=\""))) {
+                        value = lit.substring(2, lit.length() - 1);
+                    }
+                    intermediate.add("DL " + DL.get("DC") + " C " + value);
+                    LC++; // each literal occupies one word (DC)
+                }
+                break; // stop processing
+            }
+
+            // If first token is an imperative statement (no label)
+            if (IS.containsKey(parts[0].toUpperCase())) {
+                String opcode = parts[0].toUpperCase();
+                String ic = "IS " + IS.get(opcode);
+                // register may be at parts[1]
+                if (parts.length > 1 && RG.containsKey(parts[1].toUpperCase())) {
+                    ic += " RG " + RG.get(parts[1].toUpperCase());
+                }
+                // operand may be at parts[parts.length-1] (after comma)
+                if (parts.length > 1) {
+                    // find the operand token (skip comma tokens)
+                    String operand = null;
+                    for (int i = 1; i < parts.length; i++) {
+                        if (parts[i].equals(",")) continue;
+                        // skip if it's a register (we already handled)
+                        if (i == 1 && RG.containsKey(parts[i].toUpperCase())) continue;
+                        operand = parts[i];
+                        break;
+                    }
+                    if (operand != null) {
+                        if (operand.startsWith("=")) { // literal
+                            if (!Littab.contains(operand)) Littab.add(operand);
+                            ic += " L " + Littab.indexOf(operand);
+                        } else { // symbol
+                            if (!Symtab.contains(operand)) Symtab.add(operand);
+                            ic += " S " + Symtab.indexOf(operand);
+                        }
+                    }
+                }
+                intermediate.add(ic);
+                LC++; // imperative occupies one memory word
+                continue;
+            }
+
+            // Otherwise assume line starts with a LABEL (e.g., ONE DS 4)
+            String label = parts[0];
+            if (!Symtab.contains(label)) Symtab.add(label);
+            SymtabADD.put(label, LC); // label gets current LC
+
+            // process the rest after label
+            if (parts.length > 1) {
+                String opcode = parts[1].toUpperCase();
+
+                // Declarative statements: DS / DC
+                if (DL.containsKey(opcode)) {
+                    if (opcode.equals("DS")) {
+                        int size = 1;
+                        if (parts.length > 2) {
+                            try {
+                                size = Integer.parseInt(parts[2]);
+                            } catch (NumberFormatException nfe) {
+                                System.err.println("Invalid DS size at label " + label + ": " + parts[2] + " (using 1)");
+                                size = 1;
+                            }
+                        }
+                        intermediate.add("DL " + DL.get("DS") + " C " + size);
+                        LC += size;
+                    } else if (opcode.equals("DC")) {
+                        String value = (parts.length > 2) ? parts[2] : "0";
+                        intermediate.add("DL " + DL.get("DC") + " C " + value);
+                        LC++; // DC occupies one word
+                    }
+                    continue;
+                }
+
+                // Label followed by an imperative instruction (rare case)
+                if (IS.containsKey(opcode)) {
+                    String ic = "IS " + IS.get(opcode);
+                    // register might be at parts[2]
+                    if (parts.length > 2 && RG.containsKey(parts[2].toUpperCase())) {
+                        ic += " RG " + RG.get(parts[2].toUpperCase());
+                    }
+                    // operand might be later
+                    if (parts.length > 2) {
+                        String operand = null;
+                        for (int i = 2; i < parts.length; i++) {
+                            if (parts[i].equals(",")) continue;
+                            if (i == 2 && RG.containsKey(parts[i].toUpperCase())) continue;
+                            operand = parts[i];
+                            break;
+                        }
+                        if (operand != null) {
+                            if (operand.startsWith("=")) {
+                                if (!Littab.contains(operand)) Littab.add(operand);
+                                ic += " L " + Littab.indexOf(operand);
+                            } else {
+                                if (!Symtab.contains(operand)) Symtab.add(operand);
+                                ic += " S " + Symtab.indexOf(operand);
+                            }
+                        }
+                    }
+                    intermediate.add(ic);
+                    LC++;
+                }
+            }
+        }
+    }
+}
